@@ -8,6 +8,10 @@ import numpy as np
 import sys
 import cv2
 import os
+import rospy
+from std_msgs.msg import String
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge, CvBridgeError
 
 old_graph_msg = 'Resolving old graph def {} (no guarantee)'
 
@@ -26,7 +30,7 @@ def load_from_ckpt(self):
             load_point = load_point.split('"')[1]
             load_point = load_point.split('-')[-1]
             self.FLAGS.load = int(load_point)
-    
+
     load_point = os.path.join(self.FLAGS.backup, self.meta['name'])
     load_point = '{}-{}'.format(load_point, self.FLAGS.load)
     self.say('Loading from {}'.format(load_point))
@@ -41,10 +45,10 @@ def say(self, *msgs):
         if msg is None: continue
         print(msg)
 
-def load_old_graph(self, ckpt):	
+def load_old_graph(self, ckpt):
     ckpt_loader = create_loader(ckpt)
     self.say(old_graph_msg.format(ckpt))
-    
+
     for var in tf.global_variables():
         name = var.name.split(':')[0]
         args = [name, var.get_shape()]
@@ -57,6 +61,62 @@ def load_old_graph(self, ckpt):
         self.sess.run(op, {plh: val})
 
 def camera(self, file):
+    camera = cv2.VideoCapture(0)
+    self.say('Press [ESC] to quit demo')
+    assert camera.isOpened(), \
+    'Cannot capture source'
+
+    elapsed = int()
+    start = timer()
+    while camera.isOpened():
+        _, frame = camera.read()
+        preprocessed = self.framework.preprocess(frame)
+        feed_dict = {self.inp: [preprocessed]}
+        net_out = self.sess.run(self.out,feed_dict)[0]
+        processed = self.framework.postprocess(net_out, frame, False)
+        cv2.imshow('', processed)
+        elapsed += 1
+        if elapsed % 5 == 0:
+            sys.stdout.write('\r')
+            sys.stdout.write('{0:3.3f} FPS'.format(
+                elapsed / (timer() - start)))
+            sys.stdout.flush()
+        choice = cv2.waitKey(1)
+        if choice == 27: break
+
+    sys.stdout.write('\n')
+    camera.release()
+    cv2.destroyAllWindows()
+
+class image_converter:
+
+  def __init__(self):
+    self.image_pub = rospy.Publisher("image_topic_2",Image)
+
+    self.bridge = CvBridge()
+    self.image_sub = rospy.Subscriber("image_topic",Image,self.callback)
+
+  def callback(self,data):
+    try:
+      cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
+    except CvBridgeError as e:
+      print(e)
+
+    (rows,cols,channels) = cv_image.shape
+    if cols > 60 and rows > 60 :
+      cv2.circle(cv_image, (50,50), 10, 255)
+
+    cv2.imshow("Image window", cv_image)
+    cv2.waitKey(3)
+
+    try:
+      self.image_pub.publish(self.bridge.cv2_to_imgmsg(cv_image, "bgr8"))
+    except CvBridgeError as e:
+      print(e)
+
+def stereo_ros(self, file):
+    stereo_left_topic = self.FLAGS.stereo_left_topic
+    stereo_right_topic = self.FLAGS.stereo_right_topic
     camera = cv2.VideoCapture(0)
     self.say('Press [ESC] to quit demo')
     assert camera.isOpened(), \
